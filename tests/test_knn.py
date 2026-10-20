@@ -8,7 +8,7 @@ import h5py
 import numpy as np
 import scipy.sparse as sp
 
-from knn import write_neighbors_graph
+from knn import compute_neighbors, write_neighbors_graph
 from readers import read_neighbors
 
 
@@ -36,3 +36,28 @@ def test_neighbors_h5_layout_and_roundtrip(tmp_path):
     assert cell_ids == ids
     np.testing.assert_array_equal(distances.toarray(), d.toarray())
     np.testing.assert_array_equal(connectivities.toarray(), c.toarray())
+
+
+def _neighbor_sets(distances):
+    d = distances.tocsr()
+    return [set(d.indices[d.indptr[i]:d.indptr[i + 1]]) for i in range(d.shape[0])]
+
+
+def test_transformer_sklearn_is_exact_above_scanpy_threshold():
+    """Above 8,192 cells scanpy's default switches to approximate search;
+    --transformer sklearn must still return the exact neighbours."""
+    n, k = 8300, 15
+    rng = np.random.default_rng(0)
+    emb = rng.standard_normal((n, 5))
+    adata = ad.AnnData(X=np.zeros((n, 1)))
+    adata.obs_names = [f"c{i}" for i in range(n)]
+    adata.obsm["X_pca"] = emb
+    compute_neighbors(adata, k, "umap", 0, transformer="sklearn")
+
+    # scanpy counts the cell itself among n_neighbors, so k - 1 others.
+    sample = rng.choice(n, 50, replace=False)
+    got = _neighbor_sets(adata.obsp["distances"])
+    for i in sample:
+        dist = ((emb - emb[i]) ** 2).sum(axis=1)
+        dist[i] = np.inf
+        assert got[i] == set(np.argsort(dist)[: k - 1])

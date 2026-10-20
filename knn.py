@@ -12,6 +12,13 @@ Output HDF5: {output_dir}/{name}_neighbors.h5
   nested group so the clustering stage can read them directly instead of
   reconstructing them (both graphs share /cell_ids):
     /connectivities/{data,indices,indptr}  CSR (n_cells, n_cells)
+
+Neighbour search (--transformer)
+--------------------------------
+auto         scanpy's default: exact for euclidean below 8,192 cells, then
+             pynndescent (approximate, seeded) above, silently.
+sklearn      exact brute force (sklearn KNeighborsTransformer) at every size.
+pynndescent  approximate at every size.
 """
 
 import argparse
@@ -41,6 +48,10 @@ def parse_args():
     p.add_argument("--flavor", type=str, required=True,
                    choices=["umap", "gauss"], help="Method to compute connectivities")
     p.add_argument("--random_seed", type=int, required=True, help="Random seed")
+    p.add_argument("--transformer", type=str, default="auto",
+                   choices=["auto", "sklearn", "pynndescent"],
+                   help="Neighbour search: auto = scanpy's size-based default, "
+                        "sklearn = exact brute force, pynndescent = approximate")
     return p.parse_args()
 
 
@@ -61,8 +72,15 @@ def write_neighbors_graph(adata, out_dir, name):
     print(f"  wrote: {out}")
 
 
+def compute_neighbors(adata, n_neighbors, flavor, random_seed, transformer="auto"):
+    sc.pp.neighbors(adata, n_neighbors=n_neighbors, method=flavor, use_rep="X_pca",
+                    random_state=random_seed,
+                    transformer=None if transformer == "auto" else transformer)
+
+
 def main():
     args = parse_args()
+    print(f"Full command: {' '.join(sys.argv)}")
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -74,8 +92,8 @@ def main():
     adata.obs_names = df[:, 0].to_list()
     adata.obsm["X_pca"] = embedding
 
-    sc.pp.neighbors(adata, n_neighbors=args.n_neighbors, method=args.flavor,
-                    use_rep="X_pca", random_state=args.random_seed)
+    compute_neighbors(adata, args.n_neighbors, args.flavor, args.random_seed,
+                      args.transformer)
 
     write_neighbors_graph(adata, args.output_dir, args.name)
 
