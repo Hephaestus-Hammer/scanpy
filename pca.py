@@ -67,6 +67,14 @@ FIX OPTIONS, in increasing order of work:
      workaround for it.
   3. Expose covariance_eigh instead — but it is numerically the same as arpack
      here, so it adds a job, not information.
+
+--solver covariance_eigh
+------------------------
+A direct method: eigendecomposition of the gene covariance (Gram) matrix, with
+no iterations, tolerance or random start, so --random_seed has no effect on it.
+Works on sparse and dense input. Exposed for deterministic baselines, where it
+removes arpack's random start vector as a source of run-to-run variation even
+though the two agree closely (see above).
 """
 
 import argparse
@@ -96,7 +104,8 @@ def parse_args():
     cli.add_base_args(p)             # --output_dir, --name
     cli.add_stage_args(p, "PCA")     # --normalized_selected_h5
     p.add_argument("--solver", type=str, required=True,
-                   choices=["arpack", "randomized", "full"], help="PCA solver")
+                   choices=["arpack", "randomized", "full", "covariance_eigh"],
+                   help="PCA solver")
     # Dense vs sparse is its own axis, not a side effect of the solver: the
     # paper contrasts the two, and only the dense path puts real work through
     # BLAS-3. Materialised in the loader so peak RSS reflects the format under
