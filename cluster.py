@@ -14,6 +14,13 @@ When --flavor leidenalg, --partition_type selects the objective:
   RBConfiguration   resolution-aware (Reichardt-Bornholdt)
   CPM               resolution-aware (Constant Potts Model)
   Modularity        no resolution (classic modularity)
+
+--n_iterations
+--------------
+Leiden iterations, passed to sc.tl.leiden for both flavors. 2 (the default)
+matches scanpy's default and earlier versions of this module; -1 iterates until
+the partition stops changing. Note scanpy's igraph flavor has known problems
+with -1; leidenalg handles it.
 """
 
 from __future__ import annotations
@@ -61,6 +68,8 @@ def parse_args():
     p.add_argument("--partition_type", choices=list(_PARTITION_CLASSES),
                    default="RBConfiguration",
                    help="Partition type (only used when --flavor leidenalg)")
+    p.add_argument("--n_iterations", type=int, default=2,
+                   help="Leiden iterations; -1 runs until convergence")
     return p.parse_args()
 
 
@@ -78,15 +87,16 @@ def build_adata(neighbors_h5):
     return adata, cell_ids
 
 
-def cluster_leiden(adata, flavor, partition_type, resolution, random_seed):
+def cluster_leiden(adata, flavor, partition_type, resolution, random_seed,
+                   n_iterations=2):
     if flavor == "igraph": # TODO(Noemi): we want it as a constant not hard coded
         sc.tl.leiden(adata, resolution=resolution, random_state=random_seed,
-                     flavor="igraph", n_iterations=2, directed=False)
+                     flavor="igraph", n_iterations=n_iterations, directed=False)
     else:
-        import leidenalg #TODO(Noemi): possibly change and put into env 
+        import leidenalg #TODO(Noemi): possibly change and put into env
         pt = getattr(leidenalg, _PARTITION_CLASSES[partition_type])
-        kw = dict(flavor="leidenalg", partition_type=pt, #TODO(Noemi): iteration strategy? -1 is to convergence, 2 is faster
-                  random_state=random_seed, n_iterations=2, directed=False)
+        kw = dict(flavor="leidenalg", partition_type=pt,
+                  random_state=random_seed, n_iterations=n_iterations, directed=False)
         if partition_type in _RESOLUTION_AWARE:
             kw["resolution"] = resolution
         elif resolution != 1.0:
@@ -102,14 +112,15 @@ def main():
     args = parse_args()
     print(f"Full command: {' '.join(sys.argv)}")
     for k in ("output_dir", "name", "neighbors_h5", "flavor", "partition_type",
-              "resolution", "random_seed"):
+              "resolution", "random_seed", "n_iterations"):
         print(f"  {k}: {getattr(args, k)}")
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
     adata, cell_ids = build_adata(args.neighbors_h5)
     labels = cluster_leiden(
-        adata, args.flavor, args.partition_type, args.resolution, args.random_seed
+        adata, args.flavor, args.partition_type, args.resolution, args.random_seed,
+        args.n_iterations,
     )
 
     out = Path(args.output_dir) / f"{args.name}_clusters.tsv"
