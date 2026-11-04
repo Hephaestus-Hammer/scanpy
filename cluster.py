@@ -38,6 +38,8 @@ import scanpy as sc
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 from common import cli  # noqa: E402
 from readers import read_neighbors  # noqa: E402
+from phases import phase  # noqa: E402
+from obkit.logger import init_logger  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -116,15 +118,24 @@ def main():
         print(f"  {k}: {getattr(args, k)}")
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    init_logger(str(args.output_dir))
 
-    adata, cell_ids = build_adata(args.neighbors_h5)
-    labels = cluster_leiden(
-        adata, args.flavor, args.partition_type, args.resolution, args.random_seed,
-        args.n_iterations,
-    )
+    with phase("load") as attrs:
+        adata, cell_ids = build_adata(args.neighbors_h5)
+        attrs["n_cells"] = adata.n_obs
 
-    out = Path(args.output_dir) / f"{args.name}_clusters.tsv"
-    pl.DataFrame({"cell_id": cell_ids, "cluster": labels}).write_csv(out, separator="\t")
+    with phase("leiden") as attrs:
+        labels = cluster_leiden(
+            adata, args.flavor, args.partition_type, args.resolution, args.random_seed,
+            args.n_iterations,
+        )
+        attrs["flavor"] = args.flavor
+        attrs["n_iterations"] = args.n_iterations
+        attrs["n_clusters"] = len(set(labels))
+
+    with phase("write"):
+        out = Path(args.output_dir) / f"{args.name}_clusters.tsv"
+        pl.DataFrame({"cell_id": cell_ids, "cluster": labels}).write_csv(out, separator="\t")
     print(f"  wrote: {out}")
 
 

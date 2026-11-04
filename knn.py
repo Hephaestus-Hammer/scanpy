@@ -33,6 +33,8 @@ import scanpy as sc
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))  # vendored `common` package (src/common)
 from common import cli  # noqa: E402
+from phases import phase  # noqa: E402
+from obkit.logger import init_logger  # noqa: E402
 
 def parse_args():
     p = argparse.ArgumentParser(description="kNN graph module (scanpy-backed)")
@@ -83,19 +85,28 @@ def main():
     print(f"Full command: {' '.join(sys.argv)}")
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    init_logger(str(args.output_dir))
 
-    # TSV has N header cols and N+1 data cols (first data col = row IDs, unnamed).
-    df = pl.read_csv(args.embedding_tsv, separator="\t", skip_rows=1, has_header=False)
-    embedding = df[:, 1:].to_numpy().astype(np.float64)
+    with phase("load") as attrs:
+        # TSV has N header cols and N+1 data cols (first data col = row IDs, unnamed).
+        df = pl.read_csv(args.embedding_tsv, separator="\t", skip_rows=1, has_header=False)
+        embedding = df[:, 1:].to_numpy().astype(np.float64)
 
-    adata = ad.AnnData(X=np.zeros((embedding.shape[0], 1)))
-    adata.obs_names = df[:, 0].to_list()
-    adata.obsm["X_pca"] = embedding
+        adata = ad.AnnData(X=np.zeros((embedding.shape[0], 1)))
+        adata.obs_names = df[:, 0].to_list()
+        adata.obsm["X_pca"] = embedding
+        attrs["n_cells"], attrs["n_dims"] = embedding.shape
 
-    compute_neighbors(adata, args.n_neighbors, args.flavor, args.random_seed,
-                      args.transformer)
+    # The search and the connectivities; with pynndescent this includes numba
+    # compiling its functions on first use.
+    with phase("knn") as attrs:
+        compute_neighbors(adata, args.n_neighbors, args.flavor, args.random_seed,
+                          args.transformer)
+        attrs["transformer"] = args.transformer
+        attrs["n_neighbors"] = args.n_neighbors
 
-    write_neighbors_graph(adata, args.output_dir, args.name)
+    with phase("write"):
+        write_neighbors_graph(adata, args.output_dir, args.name)
 
 
 if __name__ == "__main__":
