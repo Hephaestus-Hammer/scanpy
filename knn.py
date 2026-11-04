@@ -19,9 +19,20 @@ auto         scanpy's default: exact for euclidean below 8,192 cells, then
              pynndescent (approximate, seeded) above, silently.
 sklearn      exact brute force (sklearn KNeighborsTransformer) at every size.
 pynndescent  approximate at every size.
+
+Threads (--blas_threads)
+------------------------
+0 (default)  inherit OMP_NUM_THREADS etc. from the caller (Snakemake sets them to
+             the rule's threads).
+N            cap BLAS and OpenMP pools at N threads for the search and the
+             connectivities (threadpoolctl, as pca.py does). This is what bounds
+             the exact sklearn path, whose distance computation is a BLAS GEMM.
+             pynndescent parallelises with numba, which threadpoolctl does not
+             control; set NUMBA_NUM_THREADS for that.
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -30,6 +41,7 @@ import h5py
 import numpy as np
 import polars as pl
 import scanpy as sc
+from threadpoolctl import threadpool_limits
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))  # vendored `common` package (src/common)
 from common import cli  # noqa: E402
@@ -54,6 +66,8 @@ def parse_args():
                    choices=["auto", "sklearn", "pynndescent"],
                    help="Neighbour search: auto = scanpy's size-based default, "
                         "sklearn = exact brute force, pynndescent = approximate")
+    p.add_argument("--blas_threads", type=int, default=0,
+                   help="BLAS/OpenMP threads (0 = inherit OMP_NUM_THREADS)")
     return p.parse_args()
 
 
@@ -74,15 +88,20 @@ def write_neighbors_graph(adata, out_dir, name):
     print(f"  wrote: {out}")
 
 
-def compute_neighbors(adata, n_neighbors, flavor, random_seed, transformer="auto"):
-    sc.pp.neighbors(adata, n_neighbors=n_neighbors, method=flavor, use_rep="X_pca",
-                    random_state=random_seed,
-                    transformer=None if transformer == "auto" else transformer)
+def compute_neighbors(adata, n_neighbors, flavor, random_seed, transformer="auto",
+                      blas_threads=0):
+    with threadpool_limits(limits=blas_threads if blas_threads > 0 else None):
+        sc.pp.neighbors(adata, n_neighbors=n_neighbors, method=flavor, use_rep="X_pca",
+                        random_state=random_seed,
+                        transformer=None if transformer == "auto" else transformer)
 
 
 def main():
     args = parse_args()
     print(f"Full command: {' '.join(sys.argv)}")
+    if args.blas_threads > 0:
+        print(f"  blas threads limited to {args.blas_threads} "
+              f"(OMP_NUM_THREADS was {os.environ.get('OMP_NUM_THREADS', 'unset')})")
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     init_logger(str(args.output_dir))
@@ -101,9 +120,10 @@ def main():
     # compiling its functions on first use.
     with phase("knn") as attrs:
         compute_neighbors(adata, args.n_neighbors, args.flavor, args.random_seed,
-                          args.transformer)
+                          args.transformer, args.blas_threads)
         attrs["transformer"] = args.transformer
         attrs["n_neighbors"] = args.n_neighbors
+        attrs["blas_threads"] = args.blas_threads
 
     with phase("write"):
         write_neighbors_graph(adata, args.output_dir, args.name)

@@ -40,8 +40,9 @@ def test_knn_and_cluster_log_phases(tmp_path):
 
     subprocess.run([sys.executable, str(ROOT / "cluster.py"), "--output_dir", str(cl_out), "--name", "cl",
                     "--neighbors_h5", str(knn_out / "nn_neighbors.h5"), "--flavor", "igraph",
-                    "--resolution", "1.0", "--random_seed", "0"],
+                    "--resolution", "1.0", "--random_seed", "0", "--blas_threads", "1"],
                    check=True)
     seq, ev = _phases(cl_out)
     assert seq == _expected("load", "leiden", "write")
     assert ev[3]["attrs"]["n_clusters"] >= 3
+    assert ev[3]["attrs"]["blas_threads"] == 1

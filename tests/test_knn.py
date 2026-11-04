@@ -61,3 +61,17 @@ def test_transformer_sklearn_is_exact_above_scanpy_threshold():
         dist = ((emb - emb[i]) ** 2).sum(axis=1)
         dist[i] = np.inf
         assert got[i] == set(np.argsort(dist)[: k - 1])
+
+
+def test_blas_threads_caps_the_pools_during_the_search(monkeypatch):
+    """--blas_threads N: every BLAS/OpenMP pool is capped at N while scanpy runs."""
+    import knn
+    from threadpoolctl import threadpool_info
+
+    seen = []
+    monkeypatch.setattr(knn.sc.pp, "neighbors",
+                        lambda *a, **k: seen.append([p["num_threads"] for p in threadpool_info()]))
+    adata = ad.AnnData(X=np.zeros((10, 1)))
+    adata.obsm["X_pca"] = np.zeros((10, 2))
+    compute_neighbors(adata, 5, "umap", 0, transformer="sklearn", blas_threads=1)
+    assert seen and seen[0] and all(n == 1 for n in seen[0])
