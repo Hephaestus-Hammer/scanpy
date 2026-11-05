@@ -196,7 +196,7 @@ def main():
     # Write a simple output file
     adata_selected = adata_norm[:, sel_feats].copy()
 
-    output_file = output_dir / f"{args.name}_normalized_selected.h5"
+    output_file = cli.output_path(args, "normalized_selected_h5", "_normalized_selected.h5")
     print(f"output_file: {output_file}")
 
     write_tenx_matrix(adata_selected, output_file)

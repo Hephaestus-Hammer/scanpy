@@ -24,7 +24,7 @@ def neighbors_h5(tmp_path):
     a.obs_names = ids
     a.obsm["X_pca"] = emb
     sc.pp.neighbors(a, n_neighbors=K, method="umap", use_rep="X_pca", random_state=0)
-    write_neighbors_graph(a, tmp_path, "t")
+    write_neighbors_graph(a, tmp_path / "t_neighbors.h5")
     return tmp_path / "t_neighbors.h5", ids
 
 

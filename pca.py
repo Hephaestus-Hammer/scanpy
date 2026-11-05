@@ -221,10 +221,10 @@ def main():
 
     with phase("write"):
         col_names = [f"PC{i + 1}" for i in range(embedding.shape[1])]
-        embedding_out = Path(args.output_dir) / f"{args.name}_embedding.tsv"
+        embedding_out = cli.output_path(args, "embedding_tsv", "_embedding.tsv")
         write_embeddings(Embedding(embedding, list(cell_ids), col_names), embedding_out)
 
-        loadings_out = Path(args.output_dir) / f"{args.name}_loadings.tsv"
+        loadings_out = cli.output_path(args, "loadings_tsv", "_loadings.tsv")
         write_loadings(Loadings(loadings, list(gene_ids), col_names), loadings_out)
     print(f"  wrote: {embedding_out}")
     print(f"  wrote: {loadings_out}")

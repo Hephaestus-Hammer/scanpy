@@ -106,7 +106,7 @@ def main():
     print(f"dim(d): {d.shape}")
 
     # Write a simple output file
-    output_file = args.output_dir / f"{args.name}_normalized.h5"
+    output_file = cli.output_path(args, "normalized_h5", "_normalized.h5")
     print(f"output_file: {output_file}")
 
     # transpose to features x cells

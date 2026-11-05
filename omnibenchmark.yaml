@@ -12,7 +12,7 @@ entrypoints:
 # `pixi run -e dev sync` (from this module root) refreshes it.
 templates:
   repo: https://github.com/omni-scrna/boilerplate
-  ref: main
+  ref: api-0.8.0       # --output id=PATH (api 0.8); back to main once merged
   lang: python
 
 # benchmark(s) this module works with

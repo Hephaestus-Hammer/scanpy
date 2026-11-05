@@ -43,8 +43,7 @@ def parse_args():
     return p.parse_args()
 
 
-def write_neighbors_graph(adata, out_dir, name):
-    out = Path(out_dir) / f"{name}_neighbors.h5"
+def write_neighbors_graph(adata, out):
     write_graph(NeighborGraph(adata.obsp["distances"], adata.obsp["connectivities"],
                               adata.obs_names.to_list()), out)
     print(f"  wrote: {out}")
@@ -64,7 +63,8 @@ def main():
     sc.pp.neighbors(adata, n_neighbors=args.n_neighbors, method=args.flavor,
                     use_rep="X_pca", random_state=args.random_seed)
 
-    write_neighbors_graph(adata, args.output_dir, args.name)
+    oid = "neighbors_corrected_h5" if "neighbors_corrected_h5" in dict(args.outputs) else "neighbors_h5"  # NNG_C
+    write_neighbors_graph(adata, cli.output_path(args, oid, "_neighbors.h5"))
 
 
 if __name__ == "__main__":
