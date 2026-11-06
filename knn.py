@@ -20,6 +20,23 @@ auto         scanpy's default: exact for euclidean below 8,192 cells, then
 sklearn      exact brute force (sklearn KNeighborsTransformer) at every size.
 pynndescent  approximate at every size.
 
+Stored neighbours
+-----------------
+scanpy builds the connectivities (what Leiden clusters on) from n_neighbors - 1
+neighbours per cell, self excluded, on every path. The *distances* it stores differ:
+the exact path rebuilds them with the same n_neighbors - 1, the pynndescent path keeps
+the transformer's raw n_neighbors. The distances written here are trimmed to each
+cell's n_neighbors - 1 nearest (self excluded) on every path, so every kNN module
+stores the same k. Connectivities are written as scanpy built them, untouched.
+
+Threads (--n_jobs)
+------------------
+scanpy's settings.n_jobs defaults to 1, and scanpy passes it to pynndescent, which
+then runs its numba-parallel search on one thread (numba.set_num_threads(n_jobs)),
+and to sklearn's brute-force search (joblib). --n_jobs sets it: 1 (default) is
+scanpy's own behaviour; N > 1 runs NN-descent on N threads, which is faster and is
+not reproducible at a fixed seed (parallel updates race).
+
 Threads (--blas_threads)
 ------------------------
 0 (default)  inherit OMP_NUM_THREADS etc. from the caller (Snakemake sets them to
@@ -41,6 +58,7 @@ import h5py
 import numpy as np
 import polars as pl
 import scanpy as sc
+import scipy.sparse as sp
 from threadpoolctl import threadpool_limits
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))  # vendored `common` package (src/common)
@@ -68,6 +86,9 @@ def parse_args():
                         "sklearn = exact brute force, pynndescent = approximate")
     p.add_argument("--blas_threads", type=int, default=0,
                    help="BLAS/OpenMP threads (0 = inherit OMP_NUM_THREADS)")
+    p.add_argument("--n_jobs", type=int, default=1,
+                   help="scanpy settings.n_jobs: pynndescent / sklearn search threads "
+                        "(1 = scanpy's default; >1 is not reproducible at a fixed seed)")
     return p.parse_args()
 
 
@@ -88,12 +109,32 @@ def write_neighbors_graph(adata, out_dir, name):
     print(f"  wrote: {out}")
 
 
+def trim_distances(d, k):
+    """Each row's k nearest stored entries, self excluded (stored zeros to other cells
+    are duplicates, real neighbours, and kept). Ties broken by column index."""
+    c = d.tocoo()
+    keep = c.row != c.col
+    rows, cols, dist = c.row[keep], c.col[keep], c.data[keep]
+    order = np.lexsort((cols, dist, rows))
+    rows, cols, dist = rows[order], cols[order], dist[order]
+    rank = np.arange(len(rows)) - np.searchsorted(rows, rows)
+    take = rank < k
+    return sp.csr_matrix((dist[take], (rows[take], cols[take])), shape=d.shape)
+
+
 def compute_neighbors(adata, n_neighbors, flavor, random_seed, transformer="auto",
-                      blas_threads=0):
-    with threadpool_limits(limits=blas_threads if blas_threads > 0 else None):
-        sc.pp.neighbors(adata, n_neighbors=n_neighbors, method=flavor, use_rep="X_pca",
-                        random_state=random_seed,
-                        transformer=None if transformer == "auto" else transformer)
+                      blas_threads=0, n_jobs=1):
+    old = sc.settings.n_jobs
+    sc.settings.n_jobs = n_jobs
+    try:
+        with threadpool_limits(limits=blas_threads if blas_threads > 0 else None):
+            sc.pp.neighbors(adata, n_neighbors=n_neighbors, method=flavor, use_rep="X_pca",
+                            random_state=random_seed,
+                            transformer=None if transformer == "auto" else transformer)
+    finally:
+        sc.settings.n_jobs = old
+    if "distances" in adata.obsp:
+        adata.obsp["distances"] = trim_distances(adata.obsp["distances"], n_neighbors - 1)
 
 
 def main():
@@ -120,10 +161,11 @@ def main():
     # compiling its functions on first use.
     with phase("knn") as attrs:
         compute_neighbors(adata, args.n_neighbors, args.flavor, args.random_seed,
-                          args.transformer, args.blas_threads)
+                          args.transformer, args.blas_threads, args.n_jobs)
         attrs["transformer"] = args.transformer
         attrs["n_neighbors"] = args.n_neighbors
         attrs["blas_threads"] = args.blas_threads
+        attrs["n_jobs"] = args.n_jobs
 
     with phase("write"):
         write_neighbors_graph(adata, args.output_dir, args.name)
