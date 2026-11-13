@@ -121,6 +121,33 @@ def select_by_scanpy_pearson_residuals(adata, number_selected):
 
     return adata.var_names[adata.var["highly_variable"]].tolist()
 
+# This method expects raw counts as input.
+def select_by_scanpy_seurat_v3(adata, number_selected):
+    """Select HVGs by Scanpy's seurat_v3 flavor (vst on raw counts)."""
+    # https://scanpy.readthedocs.io/en/stable/api/generated/scanpy.pp.highly_variable_genes.html
+    adata = adata.copy()
+
+    sc.pp.highly_variable_genes(adata, flavor="seurat_v3", n_top_genes=number_selected)
+
+    return adata.var_names[adata.var["highly_variable"]].tolist()
+
+def read_raw_counts(rawdata_h5ad, adata_norm, flavor):
+    """Raw counts from rawdata.h5ad, subset to the cells/genes of the normalized matrix."""
+    adata_raw = sc.read_h5ad(rawdata_h5ad)
+
+    if "counts" not in adata_raw.layers:
+        raise ValueError(f"{flavor} requires rawdata.h5ad layers['counts']")
+
+    adata_filtered = adata_raw[adata_norm.obs_names, adata_norm.var_names].copy()
+    adata_filtered.X = adata_filtered.layers["counts"].copy()
+
+    if sparse.issparse(adata_filtered.X):
+        adata_filtered.X = sparse.csr_matrix(adata_filtered.X)
+    else:
+        adata_filtered.X = np.asarray(adata_filtered.X)
+
+    return adata_filtered
+
 def main():
     args = parse_args()
 
@@ -154,20 +181,12 @@ def main():
     #     sel_feats = select_by_giniclust3(adata, args.number_selected)
 
     elif args.flavor == "pearson_residuals":
-        adata_raw = sc.read_h5ad(args.rawdata_h5ad)
-
-        if "counts" not in adata_raw.layers:
-            raise ValueError("pearson_residuals requires rawdata.h5ad layers['counts']")
-        
-        adata_filtered = adata_raw[adata_norm.obs_names, adata_norm.var_names].copy()
-        adata_filtered.X = adata_filtered.layers["counts"].copy()
-
-        if sparse.issparse(adata_filtered.X):
-            adata_filtered.X = sparse.csr_matrix(adata_filtered.X)
-        else:
-            adata_filtered.X = np.asarray(adata_filtered.X)
-
+        adata_filtered = read_raw_counts(args.rawdata_h5ad, adata_norm, args.flavor)
         sel_feats = select_by_scanpy_pearson_residuals(adata_filtered, args.number_selected)
+
+    elif args.flavor == "scanpy_seurat_v3":
+        adata_filtered = read_raw_counts(args.rawdata_h5ad, adata_norm, args.flavor)
+        sel_feats = select_by_scanpy_seurat_v3(adata_filtered, args.number_selected)
 
     else:
         raise ValueError(f"Unknown selection_type: {args.flavor}")

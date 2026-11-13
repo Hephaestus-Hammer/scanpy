@@ -21,7 +21,7 @@ pixi run python pca.py \
   --name <name> \
   --normalized.h5 <normalized.h5> \
   --selected.genes <selected.genes.gz> \
-  --solver <arpack|randomized> \
+  --solver <arpack|randomized|full|covariance_eigh> \
   --n_components <int> \
   --random_seed <int>
 ```

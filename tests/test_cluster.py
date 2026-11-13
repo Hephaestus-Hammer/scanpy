@@ -11,6 +11,7 @@ from cluster import build_adata, cluster_leiden
 from knn import write_neighbors_graph
 
 K = 15
+FLAVORS = ["igraph", "leidenalg"]
 
 
 @pytest.fixture
@@ -28,10 +29,11 @@ def neighbors_h5(tmp_path):
     return tmp_path / "t_neighbors.h5", ids
 
 
-def test_cluster_leiden_separates_blocks(neighbors_h5):
+@pytest.mark.parametrize("flavor", FLAVORS)
+def test_cluster_leiden_separates_blocks(neighbors_h5, flavor):
     path, ids = neighbors_h5
     adata, _ = build_adata(path)
-    labels = cluster_leiden(adata, resolution=1.0, random_seed=0)
+    labels = cluster_leiden(adata, flavor, "RBConfiguration", resolution=1.0, random_seed=0)
 
     assert len(labels) == len(ids)
     n = len(ids) // 2
@@ -39,8 +41,22 @@ def test_cluster_leiden_separates_blocks(neighbors_h5):
     assert set(labels[:n]) != set(labels[n:])
 
 
-def test_cluster_leiden_deterministic(neighbors_h5):
+@pytest.mark.parametrize("flavor", FLAVORS)
+def test_cluster_leiden_deterministic(neighbors_h5, flavor):
     path, _ = neighbors_h5
     a1, _ = build_adata(path)
     a2, _ = build_adata(path)
-    assert cluster_leiden(a1, 1.0, 42) == cluster_leiden(a2, 1.0, 42)
+    assert (cluster_leiden(a1, flavor, "RBConfiguration", 1.0, 42)
+            == cluster_leiden(a2, flavor, "RBConfiguration", 1.0, 42))
+
+
+def test_cluster_leiden_until_converged(neighbors_h5):
+    """n_iterations=-1 (leidenalg) still separates the blocks, and is reproducible per seed."""
+    path, ids = neighbors_h5
+    a1, _ = build_adata(path)
+    a2, _ = build_adata(path)
+    l1 = cluster_leiden(a1, "leidenalg", "RBConfiguration", 1.0, 7, n_iterations=-1)
+    l2 = cluster_leiden(a2, "leidenalg", "RBConfiguration", 1.0, 7, n_iterations=-1)
+    assert l1 == l2
+    n = len(ids) // 2
+    assert len(set(l1[:n])) == 1 and len(set(l1[n:])) == 1

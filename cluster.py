@@ -14,6 +14,20 @@ When --flavor leidenalg, --partition_type selects the objective:
   RBConfiguration   resolution-aware (Reichardt-Bornholdt)
   CPM               resolution-aware (Constant Potts Model)
   Modularity        no resolution (classic modularity)
+
+--n_iterations
+--------------
+Leiden iterations, passed to sc.tl.leiden for both flavors. 2 (the default)
+matches scanpy's default and earlier versions of this module; -1 iterates until
+the partition stops changing. Note scanpy's igraph flavor has known problems
+with -1; leidenalg handles it.
+
+--blas_threads
+--------------
+0 (default) inherits OMP_NUM_THREADS etc.; N caps BLAS and OpenMP pools at N
+threads around the clustering (threadpoolctl, as pca.py does). Both Leiden
+backends are single-threaded C, so this only bounds the numpy/scipy work around
+them; it is there so a blessed run can pin every stage to one thread.
 """
 
 from __future__ import annotations
@@ -27,10 +41,13 @@ import anndata as ad
 import numpy as np
 import polars as pl
 import scanpy as sc
+from threadpoolctl import threadpool_limits
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 from common import cli  # noqa: E402
 from readers import read_neighbors  # noqa: E402
+from phases import phase  # noqa: E402
+from obkit.logger import init_logger  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +78,10 @@ def parse_args():
     p.add_argument("--partition_type", choices=list(_PARTITION_CLASSES),
                    default="RBConfiguration",
                    help="Partition type (only used when --flavor leidenalg)")
+    p.add_argument("--n_iterations", type=int, default=2,
+                   help="Leiden iterations; -1 runs until convergence")
+    p.add_argument("--blas_threads", type=int, default=0,
+                   help="BLAS/OpenMP threads (0 = inherit OMP_NUM_THREADS)")
     return p.parse_args()
 
 
@@ -78,15 +99,16 @@ def build_adata(neighbors_h5):
     return adata, cell_ids
 
 
-def cluster_leiden(adata, flavor, partition_type, resolution, random_seed):
+def cluster_leiden(adata, flavor, partition_type, resolution, random_seed,
+                   n_iterations=2):
     if flavor == "igraph": # TODO(Noemi): we want it as a constant not hard coded
         sc.tl.leiden(adata, resolution=resolution, random_state=random_seed,
-                     flavor="igraph", n_iterations=2, directed=False)
+                     flavor="igraph", n_iterations=n_iterations, directed=False)
     else:
-        import leidenalg #TODO(Noemi): possibly change and put into env 
+        import leidenalg #TODO(Noemi): possibly change and put into env
         pt = getattr(leidenalg, _PARTITION_CLASSES[partition_type])
-        kw = dict(flavor="leidenalg", partition_type=pt, #TODO(Noemi): iteration strategy? -1 is to convergence, 2 is faster
-                  random_state=random_seed, n_iterations=2, directed=False)
+        kw = dict(flavor="leidenalg", partition_type=pt,
+                  random_state=random_seed, n_iterations=n_iterations, directed=False)
         if partition_type in _RESOLUTION_AWARE:
             kw["resolution"] = resolution
         elif resolution != 1.0:
@@ -102,18 +124,31 @@ def main():
     args = parse_args()
     print(f"Full command: {' '.join(sys.argv)}")
     for k in ("output_dir", "name", "neighbors_h5", "flavor", "partition_type",
-              "resolution", "random_seed"):
+              "resolution", "random_seed", "n_iterations", "blas_threads"):
         print(f"  {k}: {getattr(args, k)}")
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    init_logger(str(args.output_dir))
 
-    adata, cell_ids = build_adata(args.neighbors_h5)
-    labels = cluster_leiden(
-        adata, args.flavor, args.partition_type, args.resolution, args.random_seed
-    )
+    with phase("load") as attrs:
+        adata, cell_ids = build_adata(args.neighbors_h5)
+        attrs["n_cells"] = adata.n_obs
 
-    out = Path(args.output_dir) / f"{args.name}_clusters.tsv"
-    pl.DataFrame({"cell_id": cell_ids, "cluster": labels}).write_csv(out, separator="\t")
+    with phase("leiden") as attrs, threadpool_limits(
+        limits=args.blas_threads if args.blas_threads > 0 else None
+    ):
+        labels = cluster_leiden(
+            adata, args.flavor, args.partition_type, args.resolution, args.random_seed,
+            args.n_iterations,
+        )
+        attrs["flavor"] = args.flavor
+        attrs["n_iterations"] = args.n_iterations
+        attrs["blas_threads"] = args.blas_threads
+        attrs["n_clusters"] = len(set(labels))
+
+    with phase("write"):
+        out = Path(args.output_dir) / f"{args.name}_clusters.tsv"
+        pl.DataFrame({"cell_id": cell_ids, "cluster": labels}).write_csv(out, separator="\t")
     print(f"  wrote: {out}")
 
 

@@ -20,6 +20,7 @@ numpy = ">=2.4.3,<3"
 polars = ">=1,<2"
 python-igraph = ">=0.11,<1"   # Leiden backend (cluster.py)
 leidenalg = ">=0.10,<1"
+scikit-misc = ">=0.5,<0.6"
 
 # env for quick dev tasks - avoid the regular deps
 [feature.dev.dependencies]
