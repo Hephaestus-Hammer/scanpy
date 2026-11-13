@@ -39,7 +39,7 @@ arpack, covariance_eigh and full still go through sc.pp.pca, unchanged.
 
 History: before this, --solver randomized was silently ignored (measured 2026-08-15)
 ------------------------------------------------------------------------------------
-This module always feeds sc.pp.pca a SPARSE matrix (load_matrix returns CSR),
+Before input formats, this module always fed sc.pp.pca a SPARSE matrix (CSR),
 and sklearn's PCA accepts only {'arpack', 'covariance_eigh'} for sparse input.
 scanpy therefore coerces svd_solver='randomized' to 'arpack' and warns:
 
@@ -156,25 +156,53 @@ def parse_args():
     return p.parse_args()
 
 
-def load_matrix(h5_path, dense=False):
-    with h5py.File(h5_path, "r") as h5:
-        g = h5["matrix"]
-        data = g["data"][:]
-        indices = g["indices"][:]
-        indptr = g["indptr"][:]
-        shape = tuple(g["shape"][:])
-        gene_ids = g["genes"][:].astype(str)
-        cell_ids = g["barcodes"][:].astype(str)
+def detect_format(h5_path):
+    """'omni', '10x' or 'h5ad', from the file's HDF5 layout (all three arrive at the same path).
 
-    X = sp.csc_matrix((data, indices, indptr), shape=shape).T.tocsr()  # cells x genes
-    if dense:
-        # Drop the sparse copy before AnnData is built, so peak reflects one
-        # representation rather than both.
-        X = X.toarray()
-        print(f"  dense matrix: {X.nbytes / 1e6:.0f} MB")
-    adata = ad.AnnData(X=X)
-    adata.obs_names = cell_ids
-    adata.var_names = gene_ids
+    omni: /matrix with genes and barcodes (CSC genes x cells, the omni-scrna layout).
+    10x:  /matrix with a features group (Cell Ranger v3 HDF5).
+    h5ad: AnnData (X, obs, var at the root); X sparse or dense.
+    """
+    with h5py.File(h5_path, "r") as h5:
+        if "matrix" in h5:
+            return "10x" if "features" in h5["matrix"] else "omni"
+        if "X" in h5 and "obs" in h5 and "var" in h5:
+            return "h5ad"
+    raise SystemExit(f"{h5_path}: neither the omni layout, 10x HDF5 nor h5ad")
+
+
+def load_matrix(h5_path, dense=False):
+    """Cells x genes AnnData from any of the input formats, X as stored (CSR or dense);
+    dense=True materialises a sparse X dense."""
+    fmt = detect_format(h5_path)
+    if fmt == "h5ad":
+        adata = ad.read_h5ad(h5_path)
+        if sp.issparse(adata.X):
+            adata.X = sp.csr_matrix(adata.X)
+    elif fmt == "10x":
+        adata = sc.read_10x_h5(h5_path)
+        if "gene_ids" in adata.var:
+            adata.var_names = adata.var["gene_ids"].astype(str).to_numpy()
+        adata.var = adata.var.iloc[:, :0]
+    else:
+        with h5py.File(h5_path, "r") as h5:
+            g = h5["matrix"]
+            data = g["data"][:]
+            indices = g["indices"][:]
+            indptr = g["indptr"][:]
+            shape = tuple(g["shape"][:])
+            gene_ids = g["genes"][:].astype(str)
+            cell_ids = g["barcodes"][:].astype(str)
+        X = sp.csc_matrix((data, indices, indptr), shape=shape).T.tocsr()  # cells x genes
+        adata = ad.AnnData(X=X)
+        adata.obs_names = cell_ids
+        adata.var_names = gene_ids
+    print(f"  input: {fmt}, {'sparse' if sp.issparse(adata.X) else 'dense'} as stored")
+    if dense and sp.issparse(adata.X):
+        # Drop the sparse copy so peak reflects one representation rather than both.
+        adata.X = adata.X.toarray()
+        print(f"  dense matrix: {adata.X.nbytes / 1e6:.0f} MB")
+    adata.uns["input_format"] = fmt
     return adata
 
 
@@ -310,11 +338,13 @@ def main():
     init_logger(str(args.output_dir))
 
     with phase("load") as attrs:
-        if args.solver == "full" and args.dense != "true":
-            raise SystemExit("--solver full is dense-only (sklearn refuses sparse "
-                             "input); pass --dense true rather than let scanpy "
-                             "silently substitute another solver")
         adata = load_matrix(args.normalized_selected_h5, dense=args.dense == "true")
+        if args.solver == "full" and sp.issparse(adata.X):
+            raise SystemExit("--solver full is dense-only (sklearn refuses sparse "
+                             "input); pass --dense true (or a dense h5ad) rather than let "
+                             "scanpy silently substitute another solver")
+        attrs["format"] = adata.uns["input_format"]
+        attrs["layout"] = "sparse" if sp.issparse(adata.X) else "dense"
         if args.dtype != "input":
             adata.X = adata.X.astype(args.dtype)
         print(f"  compute dtype: {adata.X.dtype}")
