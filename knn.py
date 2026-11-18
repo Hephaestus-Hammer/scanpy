@@ -19,13 +19,12 @@ import sys
 from pathlib import Path
 
 import anndata as ad
-import h5py
 import numpy as np
-import polars as pl
 import scanpy as sc
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))  # vendored `common` package (src/common)
 from common import cli  # noqa: E402
+from writers import NeighborGraph, read_embeddings, write_graph  # noqa: E402
 
 def parse_args():
     p = argparse.ArgumentParser(description="kNN graph module (scanpy-backed)")
@@ -44,20 +43,10 @@ def parse_args():
     return p.parse_args()
 
 
-def _write_csr(grp, m):
-    m = m.tocsr()
-    grp.create_dataset("data",    data=m.data)
-    grp.create_dataset("indices", data=m.indices)
-    grp.create_dataset("indptr",  data=m.indptr)
-
-
 def write_neighbors_graph(adata, out_dir, name):
     out = Path(out_dir) / f"{name}_neighbors.h5"
-    with h5py.File(out, "w") as h5:
-        # dtype="S": h5py can't write numpy unicode ('<U') arrays; bytes give portable fixed-length HDF5 strings.
-        h5.create_dataset("cell_ids", data=np.array(adata.obs_names.to_list(), dtype="S"))
-        _write_csr(h5, adata.obsp["distances"])  # distances flat at the root (R metrics reader)
-        _write_csr(h5.create_group("connectivities"), adata.obsp["connectivities"])
+    write_graph(NeighborGraph(adata.obsp["distances"], adata.obsp["connectivities"],
+                              adata.obs_names.to_list()), out)
     print(f"  wrote: {out}")
 
 
@@ -66,13 +55,11 @@ def main():
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
-    # TSV has N header cols and N+1 data cols (first data col = row IDs, unnamed).
-    df = pl.read_csv(args.embedding_tsv, separator="\t", skip_rows=1, has_header=False)
-    embedding = df[:, 1:].to_numpy().astype(np.float64)
+    emb = read_embeddings(args.embedding_tsv)
 
-    adata = ad.AnnData(X=np.zeros((embedding.shape[0], 1)))
-    adata.obs_names = df[:, 0].to_list()
-    adata.obsm["X_pca"] = embedding
+    adata = ad.AnnData(X=np.zeros((emb.matrix.shape[0], 1)))
+    adata.obs_names = emb.row_ids
+    adata.obsm["X_pca"] = emb.matrix
 
     sc.pp.neighbors(adata, n_neighbors=args.n_neighbors, method=args.flavor,
                     use_rep="X_pca", random_state=args.random_seed)
