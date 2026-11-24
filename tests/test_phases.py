@@ -25,7 +25,7 @@ def test_knn_and_cluster_log_phases(tmp_path):
     emb = np.vstack([rng.normal(c, 0.3, (60, 5)) for c in (0, 4, 8)])
     tsv = tmp_path / "e_embedding.tsv"
     with open(tsv, "w") as f:
-        f.write("\t".join(f"PC{i + 1}" for i in range(emb.shape[1])) + "\n")
+        f.write("cell_id\t" + "\t".join(f"PC{i + 1}" for i in range(emb.shape[1])) + "\n")
         for i, row in enumerate(emb):
             f.write(f"c{i}\t" + "\t".join(f"{v:.6f}" for v in row) + "\n")
 
