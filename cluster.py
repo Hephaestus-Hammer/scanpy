@@ -39,15 +39,14 @@ from pathlib import Path
 
 import anndata as ad
 import numpy as np
-import polars as pl
 import scanpy as sc
 from threadpoolctl import threadpool_limits
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 from common import cli  # noqa: E402
-from readers import read_neighbors  # noqa: E402
 from phases import phase  # noqa: E402
 from obkit.logger import init_logger  # noqa: E402
+from writers import Labels, read_graph, write_labels  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -87,7 +86,8 @@ def parse_args():
 
 def build_adata(neighbors_h5):
     """AnnData with the stored distances/connectivities graph wired up for scanpy."""
-    distances, connectivities, cell_ids = read_neighbors(neighbors_h5)
+    g = read_graph(neighbors_h5)
+    distances, connectivities, cell_ids = g.distances, g.connectivities, g.row_ids
     adata = ad.AnnData(X=np.zeros((len(cell_ids), 1)))
     adata.obs_names = cell_ids
     adata.obsp["distances"] = distances
@@ -148,7 +148,7 @@ def main():
 
     with phase("write"):
         out = Path(args.output_dir) / f"{args.name}_clusters.tsv"
-        pl.DataFrame({"cell_id": cell_ids, "cluster": labels}).write_csv(out, separator="\t")
+        write_labels(Labels(labels, cell_ids), out)
     print(f"  wrote: {out}")
 
 
