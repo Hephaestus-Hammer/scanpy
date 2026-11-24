@@ -12,7 +12,7 @@ hand-written and fully visible in their entrypoint::
     from common import cli
 
     p = argparse.ArgumentParser()
-    cli.add_base_args(p)                 # --output_dir, --name  (schema/_base.json)
+    cli.add_base_args(p)                 # --output_dir, --name  (schema/_base.json), --output
     cli.add_stage_args(p, "embedding")   # the stage I/O contract (schema/embedding.json)
     # the author's own method params — plain argparse, fully visible & owned:
     p.add_argument("--solver", choices=["arpack", "randomized"], required=True)
@@ -97,7 +97,30 @@ def add_base_args(parser: argparse.ArgumentParser,
     base_path = schema_dir / f"{_BASE_SCHEMA}.json"
     if not base_path.is_file():
         raise SystemExit(f"base schema not found: {base_path}")
-    return _add_args(parser, _read_schema(base_path).get("args", []))
+    _add_args(parser, _read_schema(base_path).get("args", []))
+    # Named outputs (omnibenchmark api >= 0.8): one `--output id=PATH` per stage
+    # output. Not in the schema: it repeats, and older runtimes never pass it.
+    parser.add_argument("--output", dest="outputs", action="append", default=[],
+                        type=_output_pair, metavar="ID=PATH",
+                        help="where to write output ID (repeatable)")
+    return parser
+
+
+def _output_pair(s: str) -> tuple[str, Path]:
+    oid, sep, path = s.partition("=")
+    if not sep or not oid or not path:
+        raise argparse.ArgumentTypeError(f"--output wants ID=PATH, got {s!r}")
+    return oid, Path(path)
+
+
+def output_path(args: argparse.Namespace, output_id: str, suffix: str) -> Path:
+    """Where to write output ``output_id``: the path the runtime passed with
+    ``--output <id>=PATH`` (api >= 0.8), else ``<output_dir>/<name><suffix>``,
+    the pre-0.8 convention."""
+    for oid, path in getattr(args, "outputs", None) or []:
+        if oid == output_id:
+            return path
+    return Path(args.output_dir) / f"{args.name}{suffix}"
 
 
 def add_stage_args(parser: argparse.ArgumentParser, schema: str,

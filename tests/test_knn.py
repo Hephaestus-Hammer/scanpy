@@ -24,7 +24,7 @@ def test_neighbors_h5_layout_and_roundtrip(tmp_path):
     adata.obs_names = ids
     adata.obsp["distances"] = d
     adata.obsp["connectivities"] = c
-    write_neighbors_graph(adata, tmp_path, "t")
+    write_neighbors_graph(adata, tmp_path / "t_neighbors.h5")
 
     p = tmp_path / "t_neighbors.h5"
     with h5py.File(p, "r") as h5:

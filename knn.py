@@ -91,8 +91,7 @@ def parse_args():
     return p.parse_args()
 
 
-def write_neighbors_graph(adata, out_dir, name):
-    out = Path(out_dir) / f"{name}_neighbors.h5"
+def write_neighbors_graph(adata, out):
     write_graph(NeighborGraph(adata.obsp["distances"], adata.obsp["connectivities"],
                               adata.obs_names.to_list()), out)
     print(f"  wrote: {out}")
@@ -134,7 +133,9 @@ def main():
               f"(OMP_NUM_THREADS was {os.environ.get('OMP_NUM_THREADS', 'unset')})")
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    init_logger(str(args.output_dir))
+    oid = "neighbors_corrected_h5" if "neighbors_corrected_h5" in dict(args.outputs) else "neighbors_h5"  # NNG_C
+    out = cli.output_path(args, oid, "_neighbors.h5")
+    init_logger(str(out.parent))
 
     with phase("load") as attrs:
         emb = read_embeddings(args.embedding_tsv)
@@ -155,7 +156,7 @@ def main():
         attrs["n_jobs"] = args.n_jobs
 
     with phase("write"):
-        write_neighbors_graph(adata, args.output_dir, args.name)
+        write_neighbors_graph(adata, out)
 
 
 if __name__ == "__main__":

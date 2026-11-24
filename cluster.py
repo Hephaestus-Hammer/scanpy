@@ -128,7 +128,9 @@ def main():
         print(f"  {k}: {getattr(args, k)}")
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    init_logger(str(args.output_dir))
+    oid = "clusters_corrected_tsv" if "clusters_corrected_tsv" in dict(args.outputs) else "clusters_tsv"  # CLUST_C
+    out = cli.output_path(args, oid, "_clusters.tsv")
+    init_logger(str(out.parent))
 
     with phase("load") as attrs:
         adata, cell_ids = build_adata(args.neighbors_h5)
@@ -147,7 +149,6 @@ def main():
         attrs["n_clusters"] = len(set(labels))
 
     with phase("write"):
-        out = Path(args.output_dir) / f"{args.name}_clusters.tsv"
         write_labels(Labels(labels, cell_ids), out)
     print(f"  wrote: {out}")
 
