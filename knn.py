@@ -52,6 +52,13 @@ def write_neighbors_graph(adata, out):
 def main():
     args = parse_args()
 
+    # some LOGGING
+    print(f"Full command: {' '.join(sys.argv)}")
+    for k in ("output_dir", "name", "embedding_tsv", "corrected_tsv", "n_neighbors", "flavor", "random_seed"):
+        print(f"  {k}: {getattr(args, k)}")
+    for key, path in args.outputs.items():
+        print(f"[outputs] {key}: {path}")
+
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
     emb = read_embeddings(args.embedding_tsv)
