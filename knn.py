@@ -54,7 +54,7 @@ def main():
 
     # some LOGGING
     print(f"Full command: {' '.join(sys.argv)}")
-    for k in ("output_dir", "name", "embedding_tsv", "corrected_tsv", "n_neighbors", "flavor", "random_seed"):
+    for k in ("output_dir", "name", "embedding_tsv", "n_neighbors", "flavor", "random_seed"):
         print(f"  {k}: {getattr(args, k)}")
     outputs = dict(args.output)
     for key, path in outputs.items():
