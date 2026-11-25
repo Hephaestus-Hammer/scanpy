@@ -56,7 +56,8 @@ def main():
     print(f"Full command: {' '.join(sys.argv)}")
     for k in ("output_dir", "name", "embedding_tsv", "corrected_tsv", "n_neighbors", "flavor", "random_seed"):
         print(f"  {k}: {getattr(args, k)}")
-    for key, path in args.outputs.items():
+    outputs = dict(args.output)
+    for key, path in outputs.items():
         print(f"[outputs] {key}: {path}")
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
