@@ -140,3 +140,52 @@ def test_knn_logs_phases(tmp_path):
     assert [(e["event"], e["phase"]) for e in ev] == [(n, p) for n in ("load", "knn", "write") for p in ("start", "end")]
     assert ev[1]["attrs"] == {"n_cells": 180, "n_dims": 5}
     assert ev[3]["attrs"]["transformer"] == "auto"
+
+
+def test_snn_connectivities_is_seurats_jaccard():
+    """snn: |N_i & N_j| / |N_i | N_j| over neighbour sets with each cell itself added,
+    below-prune entries dropped, symmetric, diagonal 1 (Seurat's ComputeSNN)."""
+    from knn import snn_connectivities
+    rng = np.random.default_rng(0)
+    n, k = 40, 6
+    rows = np.repeat(np.arange(n), k - 1)
+    cols = np.concatenate([rng.choice(np.delete(np.arange(n), i), k - 1, replace=False) for i in range(n)])
+    d = sp.csr_matrix((rng.random(len(rows)) + 0.1, (rows, cols)), shape=(n, n))
+    sets = [set(d[i].indices) | {i} for i in range(n)]
+    want = np.array([[len(a & b) / len(a | b) for b in sets] for a in sets])
+    want[want < 1 / 15] = 0
+    got = snn_connectivities(d).toarray()
+    np.testing.assert_allclose(got, want, rtol=1e-6)
+    np.testing.assert_allclose(got, got.T)
+    assert (np.diag(got) == 1).all()
+    assert snn_connectivities(d, prune=0.5).toarray()[(want > 0) & (want < 0.5)].sum() == 0
+
+
+def test_connectivities_option(tmp_path):
+    """--connectivities: umap overrides --flavor gauss; snn replaces the weights, not the neighbours."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    rng = np.random.default_rng(0)
+    emb = np.vstack([rng.normal(c, 0.3, (60, 5)) for c in (0, 4, 8)])
+    tsv = tmp_path / "e_embedding.tsv"
+    with open(tsv, "w") as f:
+        f.write("cell_id\t" + "\t".join(f"PC{i + 1}" for i in range(emb.shape[1])) + "\n")
+        for i, row in enumerate(emb):
+            f.write(f"c{i}\t" + "\t".join(f"{v:.6f}" for v in row) + "\n")
+
+    def run(name, *extra):
+        subprocess.run([sys.executable, str(root / "knn.py"), "--output_dir", str(tmp_path), "--name", name,
+                        "--embedding_tsv", str(tsv), "--n_neighbors", "10", "--random_seed", "0",
+                        "--transformer", "sklearn", *extra], check=True)
+        return read_neighbors(tmp_path / f"{name}_neighbors.h5")
+
+    u_d, u_c, _ = run("u", "--flavor", "umap")
+    _, g_c, _ = run("g", "--flavor", "gauss", "--connectivities", "umap")
+    s_d, s_c, _ = run("s", "--flavor", "umap", "--connectivities", "snn")
+    np.testing.assert_allclose(g_c.toarray(), u_c.toarray())
+    np.testing.assert_allclose(s_d.toarray(), u_d.toarray())
+    c = s_c.toarray()
+    np.testing.assert_allclose(c, c.T)
+    assert (np.diag(c) == 1).all() and not np.allclose(c, u_c.toarray())

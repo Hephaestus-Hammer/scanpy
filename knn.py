@@ -29,6 +29,18 @@ the transformer's raw n_neighbors. The distances written here are trimmed to eac
 cell's n_neighbors - 1 nearest (self excluded) on every path, so every kNN module
 stores the same k. Connectivities are written as scanpy built them, untouched.
 
+Connectivities (--connectivities)
+---------------------------------
+The edge weights written as /connectivities, on the same neighbours:
+native  what --flavor gives (scanpy's UMAP or gauss weights): today's behaviour.
+umap    UMAP's fuzzy simplicial set (scanpy's method="umap"), whatever --flavor is.
+snn     Seurat's shared-nearest-neighbour graph: for cells i and j with neighbour
+        sets N_i and N_j (each cell itself included, k = n_neighbors),
+        |N_i & N_j| / |N_i | N_j|, over every pair sharing a neighbour; edges below
+        --snn_prune (default 1/15, Seurat's prune.SNN) removed; diagonal 1. The same
+        definition every kNN module uses, so --connectivities snn gives one graph
+        whichever module found the neighbours.
+
 Threads (--n_jobs)
 ------------------
 scanpy's settings.n_jobs defaults to 1, and scanpy passes it to pynndescent, which
@@ -98,6 +110,11 @@ def parse_args():
                         "sklearn = exact brute force, pynndescent = approximate")
     p.add_argument("--blas_threads", type=int, default=0,
                    help="BLAS/OpenMP threads (0 = inherit OMP_NUM_THREADS)")
+    p.add_argument("--connectivities", type=str, default="native",
+                   choices=["native", "umap", "snn"],
+                   help="edge weights: native (--flavor's), umap or snn (Seurat's SNN); see module docstring")
+    p.add_argument("--snn_prune", type=float, default=1 / 15,
+                   help="--connectivities snn: drop edges below this Jaccard index (Seurat's prune.SNN)")
     p.add_argument("--n_jobs", type=int, default=1,
                    help="scanpy settings.n_jobs: pynndescent / sklearn search threads "
                         "(1 = scanpy's default; >1 is not reproducible at a fixed seed)")
@@ -123,6 +140,21 @@ def trim_distances(d, k):
     return sp.csr_matrix((dist[take], (rows[take], cols[take])), shape=d.shape)
 
 
+def snn_connectivities(distances, prune=1 / 15):
+    """Seurat's SNN graph from a kNN graph's neighbour sets (its stored entries, each cell
+    itself added): the Jaccard index |N_i & N_j| / |N_i | N_j| for every pair sharing a
+    neighbour, entries below `prune` dropped. Symmetric, diagonal 1."""
+    n = distances.shape[0]
+    a = sp.csr_matrix((np.ones(distances.nnz, dtype=np.float32), distances.indices.copy(),
+                       distances.indptr.copy()), shape=(n, n))
+    a = ((a + sp.identity(n, dtype=np.float32, format="csr")) > 0).astype(np.float32)
+    k = np.asarray(a.sum(axis=1)).ravel()
+    shared = (a @ a.T).tocoo()
+    jac = shared.data / (k[shared.row] + k[shared.col] - shared.data)
+    keep = jac >= prune
+    return sp.csr_matrix((jac[keep], (shared.row[keep], shared.col[keep])), shape=(n, n))
+
+
 def compute_neighbors(adata, n_neighbors, flavor, random_seed, transformer="auto",
                       blas_threads=0, n_jobs=1):
     old = sc.settings.n_jobs
@@ -144,7 +176,7 @@ def main():
     # some LOGGING
     print(f"Full command: {' '.join(sys.argv)}")
     for k in ("output_dir", "name", "embedding_tsv", "n_neighbors", "flavor", "random_seed",
-              "transformer", "n_jobs", "blas_threads"):
+              "transformer", "n_jobs", "blas_threads", "connectivities"):
         print(f"  {k}: {getattr(args, k)}")
     if args.blas_threads > 0:
         print(f"  blas threads limited to {args.blas_threads} "
@@ -169,8 +201,12 @@ def main():
     # The search and the connectivities; with pynndescent this includes numba
     # compiling its functions on first use.
     with phase("knn") as attrs:
-        compute_neighbors(adata, args.n_neighbors, args.flavor, args.random_seed,
+        method = "umap" if args.connectivities == "umap" else args.flavor
+        compute_neighbors(adata, args.n_neighbors, method, args.random_seed,
                           args.transformer, args.blas_threads, args.n_jobs)
+        if args.connectivities == "snn":
+            adata.obsp["connectivities"] = snn_connectivities(adata.obsp["distances"], args.snn_prune)
+        attrs["connectivities"] = args.connectivities
         attrs["transformer"] = args.transformer
         attrs["n_neighbors"] = args.n_neighbors
         attrs["blas_threads"] = args.blas_threads
