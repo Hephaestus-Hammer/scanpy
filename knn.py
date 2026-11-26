@@ -61,9 +61,22 @@ from threadpoolctl import threadpool_limits
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))  # vendored `common` package (src/common)
 from common import cli  # noqa: E402
-from phases import phase  # noqa: E402
-from obkit.logger import init_logger  # noqa: E402
+
 from writers import NeighborGraph, read_embeddings, write_graph  # noqa: E402
+
+try:
+    from phases import phase  # noqa: E402
+    from obkit.logger import init_logger  # noqa: E402
+except ImportError:                               # obkit not installed: profiling off
+    from contextlib import contextmanager
+
+    def init_logger(*args, **kwargs):
+        pass
+
+    @contextmanager
+    def phase(name):
+        yield {}
+
 
 def parse_args():
     p = argparse.ArgumentParser(description="kNN graph module (scanpy-backed)")
